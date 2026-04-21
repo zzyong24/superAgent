@@ -102,7 +102,39 @@ hooks/       →  $HARNESS_ROOT/.claude-hooks-src/  (暂存,feature 启动时部
 
 **不复制** `SKILL.md` / `README.md` / `sub-skills/`(这些是你 Hermes 自己用的)。
 
-复制完必须立刻验证 5 个目录存在且非空。
+**⚠️ 严禁根目录平铺只读文件**:
+
+- ❌ 不要把 schema.json / template.md / *.md 从子目录拷贝到 `$HARNESS_ROOT/` 根目录
+- ❌ 例:错误 = `$HARNESS_ROOT/AGENTS.md`,正确 = `$HARNESS_ROOT/spec/AGENTS.md`
+- ❌ 例:错误 = `$HARNESS_ROOT/feature_list.schema.json`,正确 = `$HARNESS_ROOT/schemas/feature_list.schema.json`
+- ❌ 例:错误 = `$HARNESS_ROOT/guides/phase-workflow.md`,正确 = `$HARNESS_ROOT/spec/guides/phase-workflow.md`
+
+只读资源**只存在于 schemas/ templates/ spec/ protocols/ .claude-hooks-src/ 这五个子目录**,其他位置的同名文件算污染。
+
+复制完必须立刻验证 5 个目录存在且非空,并验证根目录没有平铺文件:
+
+```bash
+# 验证子目录
+for d in schemas templates spec protocols .claude-hooks-src; do
+  test -d "$HARNESS_ROOT/$d" && ls "$HARNESS_ROOT/$d" | grep -q . \
+    || { echo "❌ $d 缺失或空"; exit 1; }
+done
+
+# 验证根目录无污染(不应有 schema/template/protocol 文件在根层)
+POLLUTED=$(find "$HARNESS_ROOT" -maxdepth 1 -type f \( \
+    -name "*.schema.json" -o -name "*.template.md" \
+    -o -name "AGENTS.md" -o -name "index.md" -o -name "project.md" \
+    -o -name "checkpoint-qa.md" -o -name "yolo.md" \
+    -o -name "feature-isolation.md" -o -name "reset-mechanism.md" \
+    -o -name "process-protocol.md" -o -name "execution-paths.md" \
+    -o -name "pipeline.schema.yaml" \
+  \))
+if [ -n "$POLLUTED" ]; then
+  echo "❌ 根目录平铺了只读文件(必须只存在于子目录):"
+  echo "$POLLUTED"
+  exit 1
+fi
+```
 
 ### 1.3 建运行时骨架
 
@@ -270,28 +302,39 @@ jq -e --arg f $fid \
 
 对 `feature_list` 中 `depends_on` 为空或全部 completed 的 feature,按 `session_pool.max_concurrent` 上限(默认 2)启动。
 
+**⚠️ 先读 `protocols/execution-paths.md`**,确认本 feature 在 tooling.md 里分配的执行路径(`generator_cc` / `generator_cc_mcp` / `generator_mcp_direct`)。不同路径下 STEP 3.1-3.4 的具体实现**不同**,见该 protocol 文档第 3 节。
+
+本节给出**通用的"必做清单"**。路径差异详见 `protocols/execution-paths.md`。
+
 对每个要启动的 feature `f<N>`,**依次完成 3.1 / 3.2 / 3.3 / 3.4 四步,缺一步违规**:
 
-### 3.1 建 feature 目录与产物
+### 3.1 建 feature 目录与产物(**位置铁律**)
+
+**目录路径**:`$HARNESS_ROOT/.harness/features/f<N>/`
+❌ 不是 `$HARNESS_ROOT/f<N>/.harness/`(路径顺序反了)
+❌ 不是 `$HARNESS_ROOT/features/f<N>/`(少了 `.harness/`)
 
 ```bash
-FDIR=$HARNESS_ROOT/.harness/features/f<N>
+FDIR=$HARNESS_ROOT/.harness/features/f<N>    # ← 就是这个路径,不要改
 mkdir -p $FDIR/.claude/hooks
 ```
 
-在 `$FDIR/` 下建:
+在 `$FDIR/` 下必须有这 5 个文件(**缺一不可,STEP 2.5 会校验**):
 
-| 文件 | 内容 | 依据 |
+| 文件 | 生成方式 | 依据 |
 |---|---|---|
-| `context_snapshot.md` | 基于 `$HARNESS_ROOT/templates/feature_session_init.template.md` 填空(feature_id / name / acceptance / depends_on 产物路径 / 当前 phase) | templates |
-| `AGENTS.md` | 从 `$HARNESS_ROOT/spec/AGENTS.md` 直接复制 | spec |
-| `generator_log.md` | 基于 `$HARNESS_ROOT/templates/generator_log.template.md` 空壳 | templates |
-| `handoff.md` | 空文件(Reset 时 Generator 写) | — |
-| `session_id.txt` | 空文件(Generator 启动后写入) | — |
+| `context_snapshot.md` | 基于 `$HARNESS_ROOT/templates/feature_session_init.template.md` 填空(feature_id / name / acceptance / depends_on 产物路径 / 当前 phase / execution_path) | templates |
+| `AGENTS.md` | `cp $HARNESS_ROOT/spec/AGENTS.md $FDIR/AGENTS.md` | spec |
+| `generator_log.md` | `cp $HARNESS_ROOT/templates/generator_log.template.md $FDIR/generator_log.md`,替换 `{feature_id}` 占位符 | templates |
+| `handoff.md` | `touch $FDIR/handoff.md`(空文件,Reset 时填) | — |
+| `session_id.txt` | `touch $FDIR/session_id.txt`(空文件,STEP 3.3 填) | — |
 
 ### 3.2 部署 hook(硬约束,缺失即本 feature 禁止启动)
 
+**`generator_cc` / `generator_cc_mcp` 路径**:
+
 ```bash
+# 复制 4 个 hook 脚本 + settings 模板
 cp $HARNESS_ROOT/.claude-hooks-src/session-start.sh    $FDIR/.claude/hooks/
 cp $HARNESS_ROOT/.claude-hooks-src/pre-edit-guard.sh   $FDIR/.claude/hooks/
 cp $HARNESS_ROOT/.claude-hooks-src/pre-bash-guard.sh   $FDIR/.claude/hooks/
@@ -303,57 +346,193 @@ sed "s|\${HARNESS_ROOT}|$HARNESS_ROOT|g" \
   > $FDIR/.claude/settings.json
 
 # 验证
-test -f $FDIR/.claude/settings.json
-test -x $FDIR/.claude/hooks/session-start.sh
-test -x $FDIR/.claude/hooks/pre-edit-guard.sh
-test -x $FDIR/.claude/hooks/pre-bash-guard.sh
-test -x $FDIR/.claude/hooks/stop-guard.sh
+test -f $FDIR/.claude/settings.json || { echo "❌ settings.json 未部署"; exit 1; }
+for h in session-start pre-edit-guard pre-bash-guard stop-guard; do
+  test -x $FDIR/.claude/hooks/$h.sh || { echo "❌ $h.sh 未部署或无执行权限"; exit 1; }
+done
 ```
 
-**任一 test 失败,立即报告用户 + 停止本 feature 启动**,不得跳过 hook 直接启 session。
+**`generator_mcp_direct` 路径**(简化版 + 自检模式):
 
-### 3.3 启动 Claude Code session(**必须真启,不得由 Hermes 代劳**)
+见 `protocols/execution-paths.md` 第 3.C 节。关键差异:
 
-```bash
-HARNESS_ROOT=$HARNESS_ROOT \
-FEATURE_ID=f<N> \
-SPRINT_ID=<sprint_id> \
-claude-code --cwd $FDIR
-```
+- 仍复制 `pre-edit-guard.sh` / `pre-bash-guard.sh` / `stop-guard.sh` 到 `$FDIR/.claude/hooks/`(session-start 可不复制,因为没 CC session 启动)
+- `settings.json` 写一个自检标记:`{"_self_audit_mode": "hermes_mcp_proxy"}`
+- Hermes 代理执行时,**每次写 feature 文件前手动调 `pre-edit-guard.sh` 自检**(见 execution-paths.md 第 4 节)
 
-把 `context_snapshot.md` 内容作为初始 prompt 注入。
+**任一 test 失败,立即报告用户 + 停止本 feature 启动**,不得跳过 hook 直接推进。
 
-**如果你(Hermes)所在环境无法调用 `claude-code` 命令(没有 CLI 或权限)**:
+### 3.3 启动 session(**路径相关,见 protocols/execution-paths.md**)
+
+三条路径的具体启动命令和参数不同,见 `protocols/execution-paths.md` 第 3 节:
+
+- **generator_cc**: `claude --print "<prompt>" --settings ... --cwd $FDIR`(第 3.A 节)
+- **generator_cc_mcp**: `claude --settings ... --mcp-config $FDIR/.mcp.json --cwd $FDIR`(第 3.B 节)
+- **generator_mcp_direct**: 不启 CC,Hermes 写入 `session_id.txt = "hermes-proxy-f<N>"`,切换 `.current_agent.developer = "hermes-as-proxy"`(第 3.C 节)
+
+**如果你(Hermes)所在环境无法调用 `claude` CLI 但 feature 路径是 generator_cc/cc_mcp**:
 
 - 不得自己动手做该 feature 的业务
-- 立即推一个 gate checkpoint 问用户:"检测到无法启动 Claude Code CLI,请你手动启动一个 Claude Code session,工作目录 `$FDIR`,我等待 session_id.txt 写入"
+- 立即推一个 gate checkpoint 问用户:"检测到无法启动 Claude Code CLI(STEP 0.5 探测结果:`<具体原因>`),请你手动启动一个 CC session,工作目录 `$FDIR`,我等待 session_id.txt 写入"
 - `runtime_state.mode = "waiting_human"`
 - 等用户手动启动并在 `session_id.txt` 写入 session id 后再进 STEP 3.4
 
 ### 3.4 更新状态
 
-```json
-// session_pool.active.f<N>
-{
-  "session_id": "<从 session_id.txt 读>",
-  "status": "running",
-  "started_at": "<now_utc>",
-  "current_phase": 1,
-  "last_activity": "<now_utc>"
-}
+**`session_pool.json` 是 sprint 根目录级唯一的那份**,位置:`$HARNESS_ROOT/.harness/session_pool.json`。
 
-// .current_agent
+❌ 不要在每个 feature 下建 `f<N>/.harness/session_pool.json` —— 这个文件不在 schemas/ 里,是自造
+
+更新根目录的 session_pool.json:
+
+```bash
+POOL=$HARNESS_ROOT/.harness/session_pool.json
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# 读 session_id.txt
+SID=$(cat $FDIR/session_id.txt)
+
+# 按路径确定 session_type
+case "<本 feature 的 execution_path>" in
+  generator_cc)         STYPE="cc-print" ;;
+  generator_cc_mcp)     STYPE="cc-interactive-mcp" ;;
+  generator_mcp_direct) STYPE="mcp_direct" ;;
+esac
+
+# 更新 active 字典
+jq --arg f "f<N>" --arg sid "$SID" --arg t "$NOW" --arg st "$STYPE" \
+  '.active[$f] = {
+     session_id: $sid,
+     session_type: $st,
+     status: "running",
+     started_at: $t,
+     current_phase: 1,
+     last_activity: $t
+   }' $POOL > $POOL.tmp && mv $POOL.tmp $POOL
+```
+
+更新 `.current_agent`:
+
+```bash
+CA=$HARNESS_ROOT/.harness/.current_agent    # ← 文件名无 .json 扩展名
+# 确保只有这一个文件,删掉 .current_agent.json 如果存在
+rm -f $HARNESS_ROOT/.harness/.current_agent.json
+
+jq --arg sid "$SID" --arg f "f<N>" --arg t "$NOW" \
+  '.role = "generator"
+   | .session_id = $sid
+   | .current_feature = $f
+   | .current_phase = 1
+   | .last_activity = $t
+   | .developer = (if .session_id | startswith("hermes-proxy") then "hermes-as-proxy" else "claude-code" end)' \
+  $CA > $CA.tmp && mv $CA.tmp $CA
+```
+
+---
+
+## STEP 3.5 Phase 推进规则(**所有路径通用,不得省略**)
+
+每个 feature 必须走完 **4 个 phase**(1 plan → 2 implement → 3 verify → 4 deliver),每个 phase 完成时**必须写一条** `event_type=phase_evaluation` 到 eval_log。
+
+**`generator_cc` / `generator_cc_mcp`** 下由 CC 自己切 phase(读 AGENTS.md + phase-workflow.md 后走)。
+
+**`generator_mcp_direct`** 下由 Hermes 代理显式切 phase,在 4 个时间点写 eval_log,详见 `protocols/execution-paths.md` 第 5 节。
+
+### 3.5.1 phase=1 plan 的 eval_log 格式
+
+```json
 {
-  "role": "generator",
-  "platform": "claude-code",
-  "developer": "claude-code",
-  "session_id": "<session_id>",
-  "started_at": "<now_utc>",
-  "current_feature": "f<N>",
-  "current_phase": 1,
-  "last_activity": "<now_utc>"
+  "timestamp": "<now_utc>",
+  "sprint_id": "<sprint_id>",
+  "feature_id": "f<N>",
+  "phase": 1,
+  "event_type": "phase_evaluation",
+  "result": "pass",
+  "reason": "<具体拆了什么子任务,说了就是 plan>"
 }
 ```
+
+### 3.5.2 phase=2 implement 的 eval_log 格式
+
+```json
+{
+  "timestamp": "<now_utc>",
+  "sprint_id": "<sprint_id>",
+  "feature_id": "f<N>",
+  "phase": 2,
+  "event_type": "phase_evaluation",
+  "result": "pass",
+  "reason": "<产出物路径 + 核心动作总结,如:调 web_search 5 次采集 15 条,写入 sources.md>"
+}
+```
+
+### 3.5.3 phase=3 verify 的 eval_log 格式(**关键:必含 acceptance_results**)
+
+这一条是管线能否沉淀的**关键证据**。缺 `acceptance_results` 或没有逐条对应 feature.acceptance → phase=3 不能判 pass。
+
+```json
+{
+  "timestamp": "<now_utc>",
+  "sprint_id": "<sprint_id>",
+  "feature_id": "f<N>",
+  "phase": 3,
+  "event_type": "phase_evaluation",
+  "result": "pass",
+  "reason": "<总结:N 条 acceptance 逐条通过,证据见 acceptance_results>",
+  "acceptance_results": [
+    {
+      "id": "a1",
+      "criteria": "<feature.acceptance[0] 原文>",
+      "status": "pass",
+      "evidence": "<可验证的证据,如:文件 md5 / 行数 / 输出片段 / test 命令返回 0>"
+    },
+    {
+      "id": "a2",
+      "criteria": "<feature.acceptance[1] 原文>",
+      "status": "pass",
+      "evidence": "<证据>"
+    }
+    // ... 对应 feature.acceptance 的每一条
+  ]
+}
+```
+
+**铁律**:
+- `acceptance_results` 数组长度 == `feature.acceptance` 数组长度
+- 每条 `criteria` 字段是 feature.acceptance 的原样文字
+- `status` 只能是 `pass` / `fail` / `skipped`
+- `evidence` 不能空,不能敷衍("ok" / "done" / "no issue" 都不行,stop-guard 会拦)
+
+### 3.5.4 phase=4 deliver 的 eval_log 格式
+
+```json
+{
+  "timestamp": "<now_utc>",
+  "sprint_id": "<sprint_id>",
+  "feature_id": "f<N>",
+  "phase": 4,
+  "event_type": "phase_evaluation",
+  "result": "pass",
+  "reason": "<commit 信息 / 交付路径>",
+  "commit": "<git commit hash>"
+}
+```
+
+### 3.5.5 每次 phase 切换必须同步更新
+
+- `feature_list.features[N].phase` → 新 phase
+- `feature_list.features[N].next_phases[i].done` → 刚完成那个 phase 置 true
+- `feature_list.features[N].next_phases[i+1].current` → 下一个 phase 置 true,其他置 false
+- `session_pool.active.f<N>.current_phase` → 新 phase
+- `session_pool.active.f<N>.last_activity` → now_utc
+
+### 3.5.6 phase=4 完成后
+
+- `feature_list.features[N].status` → `"completed"`
+- `feature_list.features[N].completed_at` → now_utc
+- `feature_list.features[N].commit` → git commit hash
+- `session_pool.active.f<N>` 字段 → **从 `active` 字典删除**(不保留 `status: completed`)
+- 触发下游依赖的 feature 启动(见 protocols/feature-isolation.md)
 
 ---
 
@@ -415,6 +594,7 @@ claude-code --cwd $FDIR
 | feature 并行规则 | `protocols/feature-isolation.md` |
 | 双 Reset 机制 | `protocols/reset-mechanism.md` |
 | 过程协议落盘清单 | `protocols/process-protocol.md` |
+| **Feature 执行路径(cc / cc_mcp / mcp_direct)** | `protocols/execution-paths.md` |
 
 ---
 
@@ -518,6 +698,59 @@ STEP 0.5 环境探测必须**真跑 bash 命令**,不得:
 
 用户明确告诉你"我装了",你仍应跑 `which claude-code` 验证路径。**用户的话是参考,探测结果是真相**。
 
+### Z14. 目录位置铁律
+
+feature 目录位置只能是 `$HARNESS_ROOT/.harness/features/f<N>/`,不是:
+
+- ❌ `$HARNESS_ROOT/f<N>/.harness/`(顺序反了)
+- ❌ `$HARNESS_ROOT/features/f<N>/`(少了 `.harness`)
+- ❌ `$HARNESS_ROOT/.harness/f<N>/`(少了 `features`)
+
+只读资源(schemas/ templates/ spec/ protocols/)只能在对应子目录,**禁止根目录平铺**。见 STEP 1.2。
+
+### Z15. feature_list.json 是 Source of Truth
+
+- ❌ feature_list.features 不得空数组 + sprint_summary.json 替代
+- ❌ 不得把 feature 状态写到自造文件(如 sprint_summary / feature_report.md)绕开 schemas
+- ✅ feature_list.features[*] 必须包含所有 feature 的完整状态,符合 `schemas/feature_list.schema.json`
+- ✅ sprint_summary.json 可选,仅作为人类可读的总结辅助,不能替代
+
+### Z16. Session Pool 唯一性
+
+- ✅ `$HARNESS_ROOT/.harness/session_pool.json` 是**唯一**的 session pool 文件
+- ❌ 不得在每个 feature 下建 `f<N>/.harness/session_pool.json`(自造文件)
+- ✅ feature 启动时更新根目录 session_pool 的 `active.f<N>` 字段
+- ✅ feature 完成时从 `active` 字典**移除**该字段,不保留 `status: completed`
+
+### Z17. Phase 推进完整性
+
+- ✅ 每个 feature 必须走完 4 phase(1 plan → 2 implement → 3 verify → 4 deliver)
+- ✅ 每个 phase 完成时必须写一条 `phase_evaluation` 到 eval_log
+- ❌ 不得把 feature 从启动到完成都记为 phase=1,跳过 2/3/4
+- **phase=3 verify 必须含 `acceptance_results` 数组**,逐条对应 feature.acceptance:
+ - 数组长度 == acceptance 数组长度
+ - 每条 `criteria` = acceptance 原文
+ - `evidence` 字段非空且非敷衍(stop-guard 会拦 "ok" / "done" 等)
+- ❌ 缺 acceptance_results → phase=3 不能判 pass → sprint 不能沉淀 pipeline
+
+### Z18. 状态字段一致性
+
+同一实体状态不得分散到多个文件:
+
+- ❌ `.current_agent` 和 `.current_agent.json` 并存(文件名规范无扩展名,多出一份是冗余)
+- ❌ 一份文件写"completed",另一份写"in_progress"
+- ✅ 按 `spec/project.md` 第 2 条的规定,只保留规范文件名
+
+### Z19. 产出物位置规范
+
+feature 的**业务产出物**(代码、内容、音频、调研文档)按 tooling.md 指定路径,**不可**放到 feature 目录下 `.harness/` 里。
+
+- ✅ 正确:`$HARNESS_ROOT/research/sources.md`(tooling.md 指定路径)
+- ✅ 正确:`$HARNESS_ROOT/tutorial/ppt/index.html`(tooling.md 指定路径)
+- ❌ 错误:`$HARNESS_ROOT/.harness/features/f001/sources.md`(业务产出物不该在运行时目录里)
+
+`.harness/features/f<N>/` 只放**过程协议文件**(context_snapshot / AGENTS / generator_log / handoff / session_id.txt / .claude/)。
+
 ---
 
 ## 违规自检模板(每次完成一个 STEP 后自检一次)
@@ -529,5 +762,10 @@ STEP 0.5 环境探测必须**真跑 bash 命令**,不得:
 
 我修改的状态字段,值都在 Z10 的枚举白名单里吗?
 我把任何 feature 设为 phase>=2 或 in_progress 前,跑过 STEP 2.5 硬校验吗?
+  (STEP 2.5 的 Bash 命令必须真跑,不是"我看过了")
 我声称启了 CC,文件系统能验证吗(Z12)?
+我建的 feature 目录路径是 .harness/features/f<N>/ 还是别的(Z14)?
+feature_list.features 数组填满了吗,还是空着走捷径(Z15)?
+session_pool 只有根目录那一份,还是每个 feature 下都建了(Z16)?
+每个 phase 完成都写了 phase_evaluation 吗?phase=3 含 acceptance_results 吗(Z17)?
 ```
