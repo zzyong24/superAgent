@@ -1,131 +1,54 @@
 # superAgent
 
-> **Hermes 的一个 skill**。入口是 `SKILL.md`。
+> **一个给 Hermes 看的 skill**。入口是 `SKILL.md`。
 >
-> 当你(Hermes)被触发执行这个 skill 时,你的任务是在 `~/Workbase/pipeline/` 下初始化一个标准化的 Agent 协作环境,并作为 Planner + Evaluator 带领 Claude Code 完成一个重任务。
+> Hermes 被触发执行这个 skill 时,在用户指定的 pipeline 根目录下初始化一个标准化的 Agent 协作环境,作为 Planner + Evaluator 带领 Claude Code feature session 完成复杂任务。
+
+本仓库配合 [pipeline](https://github.com/zzyong24/pipeline) 使用。superAgent 是"约束集",pipeline 是"跑出来的结果"。
 
 ---
 
 ## 这是什么
 
-superAgent 是一个**纯约束类 skill**。仓库里**没有任何可执行代码**,全部都是:
+superAgent 是一个**纯约束类 skill**。仓库里没有任何可执行代码(除了 4 个 hook shell),全部是:
 
-- `schemas/` — 所有运行时文件的 JSON/YAML schema
-- `templates/` — 所有 Markdown 产物的模板
-- `spec/` — Generator(Claude Code)的约束规范
-- `protocols/` — 跨 Agent 的协作协议
-- `sub-skills/` — Hermes 在不同阶段进入的子 skill 定义
-- `SKILL.md` — Hermes 的入口
+| 目录 | 职责 |
+|---|---|
+| `SKILL.md` | Hermes 的入口 + STEP 0-5 流程 + Z1-Z20 铁律 |
+| `sub-skills/` | 6 个分阶段子 skill(planner / evaluator / finalizer / reset / task-runner / task-builder) |
+| `schemas/` | 7 个运行时文件的 JSON/YAML schema |
+| `templates/` | 6 个 Markdown 产物模板 |
+| `spec/` | Generator(Claude Code)的约束规范 + 开发指南 |
+| `protocols/` | 7 个跨 Agent 协作协议 |
+| `hooks/` | 4 个 P0 级硬约束 hook(shell 脚本,CC 启动时加载) |
 
-仓库本身**不运行**。它是被 Hermes 这个常驻 Agent "加载" + "按约定执行"的一套规矩。
+仓库本身**不运行**。它是 Hermes + Claude Code 的"协作契约"。
 
 ---
 
 ## 解决什么问题
 
-基于 Context Engineering 三层架构(Planner / Generator / Evaluator),把"让 AI Agent 完成一个复杂任务"这件事,从**每次都靠临场发挥**,变成**遵循一套可沉淀的工程化流程**。
+基于 Context Engineering 三层架构,把"让 AI Agent 完成复杂任务"这件事从**临场发挥**变成**工程化流程**。
+
+```
+用户 → Hermes(Planner + Evaluator) → Claude Code(Generator)
+       ↑ 你管决策                    ↑ 它管执行
+```
 
 ### 核心痛点
 
 | 痛点 | 对应机制 |
 |---|---|
-| Generator 不知道"做完"的标准 | sprint_contract + acceptance + checkpoint |
-| 跨 session 状态丢失 | `.harness/` 文件系统作为 Source of Truth |
-| Claude Code 越权充当 Planner | Generator AGENTS.md 严格约束 + phase 隔离 |
-| Claude Code 上下文膨胀 | feature 级独立 session + feature Reset |
-| Hermes 自己也会 Context Overload | Hermes 进程内 Reset + pending_eval 防丢 |
-| Harness Engineering 没工程化 | 本 skill 把一切约束显式化 |
-| 工具选型隐性、不可复用 | phase=0 tooling(v0.5 新增) |
-| 每次任务重做一遍 | 管线(pipeline)作为"成功 sprint 的抽象物" |
-| 人类介入密度无法控制 | gate/review/notify 三类 checkpoint |
-| 熟悉管线后仍然频繁打扰 | YOLO 模式(stats 驱动) |
-
----
-
-## 核心概念一张表
-
-| 概念 | 含义 | 位置 |
-|---|---|---|
-| **Sprint** | 一次走完整三层架构的任务 | `~/Workbase/pipeline/sprint_<id>/` |
-| **Pipeline** | "跑通的 sprint" 抽象成的可复用模板 | `~/.hermes/pipelines/<id>/` |
-| **Feature** | Sprint 内的一个可交付单元 | `feature_list.json` 中一条 |
-| **Phase** | feature 的阶段(0=tooling 1=plan 2=implement 3=verify 4=deliver) | feature.phase |
-| **Checkpoint** | 人类决策点,三类:gate / review / notify | feature.checkpoints[N] |
-| **Blocker** | checkpoint 里具体的待决策问题(必含 catch_all 兜底) | checkpoint.blockers[N] |
-| **YOLO** | 管线跑熟后 gate 自动通过模式 | pipeline.yolo + 本 sprint 的 abort 状态 |
-| **过程协议** | 运行时必须留下的结构化产物清单 | 见 `protocols/process-protocol.md` |
-| **Handoff** | Reset 时的中断快照(Hermes 一份、每个 feature 一份) | `.harness/` 下 |
-
----
-
-## 架构速览
-
-### 三层角色
-
-```
-用户 → Hermes(常驻 Agent) → Claude Code(feature 级独立 session)
- ↕    Planner + Evaluator          Generator
-```
-
-### 八层联动(v0.5)
-
-```
-第零层  管线层(超级 skill 库)       ~/.hermes/pipelines/
-第一层  文件层(.harness/)            Source of Truth
-第二层  Skill 层(本仓库 + sub-skills)Hermes 的强制行为
-第三层  约束层(Generator AGENTS.md) Claude Code 不越权
-第四层  CC Feature Reset              feature 级 session 断点续传
-第五层  Hermes Reset                  进程内清空上下文,文件恢复
-第六层  监控层                         token + retry + 时长 + yolo
-第七层  Checkpoint 交互层              飞书问答(不发链接)
-第八层  YOLO 层                         stats 驱动 + 激进 abort
-```
-
-### 十大关键设计决策(v0.5)
-
-1. **phase=0 tooling** 独立成 sprint 级阶段,产出 `tooling.md`
-2. **Checkpoint 问答形态**:不发链接,Hermes 提炼 2-4 个 blocker 问用户,含 catch_all 兜底
-3. **YOLO 激进退出**:一旦本 sprint 偏离历史模式,所有 auto_approved_yolo checkpoint 全部 revoke
-4. **stats 继承**:管线小版本升级继承 stats,major 变更重置
-5. **干完再抽象**:sprint-finalizer 在 sprint 结束后问是否沉淀管线
-6. **feature 级独立 session**:每个 feature 一个 Claude Code session(v0.4 是 sprint 级)
-7. **Hermes 常驻 Agent**:不是新会话启动,是进程内清空上下文
-8. **单 sprint 独占**:同时不并行多 sprint,临时轻任务走老路
-9. **用户手选管线**:不自动匹配,Hermes 列候选用户选
-10. **waiting_human 时推进无冲突 feature**:不浪费带宽
-
----
-
-## 怎么用
-
-### 一、给 Hermes(Agent)看
-
-Hermes 被用户触发这个 skill 后:
-
-1. 读 `SKILL.md`
-2. 按其中"第一步 / 第二步 / 第三步"依次执行
-3. 在各阶段进入 `sub-skills/` 对应文件
-4. 遵守 `protocols/` 和 `spec/`
-5. 产出物严格遵循 `schemas/` 和 `templates/`
-
-### 二、给用户(人类)看
-
-触发 skill 时告诉 Hermes:
-
-```
-用 tutorial-content 管线做一个 CC Switch 教学任务,
-服务器是 ubuntu-22.04,Mac/Windows 只做文字版
-```
-
-或(没有已有管线时):
-
-```
-帮我做 <任务描述>,从零规划
-```
-
-之后用户只需:
-- 在飞书回复 Hermes 推送的卡点问题(按 `1a 2b 3a` 格式)
-- 等 sprint 完成 → 决定是否沉淀成管线
+| Agent 分工没契约 | `sprint_contract.json` + `acceptance` 清单 |
+| 跨 session 状态丢失 | `.harness/feature_list.json` 作为 Source of Truth |
+| Agent 越权 | `spec/AGENTS.md` + `hooks/` 硬拦截 |
+| Agent 上下文膨胀 | feature 级独立 session + feature Reset |
+| Hermes 自己也会上下文过载 | 进程内 Reset + `pending_eval` 防丢 |
+| 工具选型隐性不可复用 | `phase=0 tooling` 独立阶段 |
+| 每次任务重做 | 管线(pipeline)= 成功 sprint 的抽象物 |
+| 人类介入密度不可控 | gate / review / notify 三类 checkpoint |
+| 熟悉任务仍频繁打扰 | YOLO 模式(管线级 + task 级) |
+| 任务没法排队 | task 队列(pending / running / 归档) |
 
 ---
 
@@ -133,121 +56,184 @@ Hermes 被用户触发这个 skill 后:
 
 ```
 superAgent/
-├── SKILL.md                     # Hermes 入口,必读
-├── README.md                    # 本文件(给人看)
-├── schemas/                     # 7 个 schema(JSON/YAML)
+├── SKILL.md                        Hermes 入口(489 行,薄入口 + 厚引用)
+├── README.md                        本文件
+│
+├── sub-skills/                      Hermes 分阶段 skill
+│   ├── sprint-planner.md             phase=0 tooling + phase=1 DAG
+│   ├── sprint-evaluator.md           监听 + 判决 + checkpoint 处理
+│   ├── sprint-finalizer.md           sprint 收尾 + 管线沉淀
+│   ├── hermes-reset.md               Hermes 进程内 Reset
+│   ├── task-runner.md                ⭐ 被 crontab 触发的 task 调度
+│   └── task-builder.md               ⭐ 用户调用,提问式建 task
+│
+├── schemas/                         运行时文件结构定义(7 个)
 │   ├── runtime_state.schema.json
 │   ├── feature_list.schema.json
 │   ├── sprint_contract.schema.json
 │   ├── session_pool.schema.json
 │   ├── eval_log.schema.json
-│   ├── pipeline.schema.yaml
-│   └── checkpoint.schema.json
-├── templates/                   # 6 个 Markdown 模板
+│   ├── checkpoint.schema.json
+│   └── pipeline.schema.yaml
+│
+├── templates/                       Markdown 产物模板(6 个)
 │   ├── tooling.template.md
 │   ├── hermes_handoff.template.md
 │   ├── claude_code_handoff.template.md
 │   ├── feature_session_init.template.md
 │   ├── generator_log.template.md
 │   └── checkpoint_notify.template.md
-├── spec/                        # Generator 约束
+│
+├── spec/                            Generator 约束
+│   ├── AGENTS.md                     ⭐ Claude Code 必读
 │   ├── index.md
 │   ├── project.md
-│   ├── AGENTS.md                # Generator 主约束(必读)
 │   └── guides/
-│       ├── phase-workflow.md
-│       ├── acceptance-writing.md
-│       └── cross-layer.md
-├── sub-skills/                  # Hermes 的 4 个子 skill
-│   ├── sprint-planner.md        # phase=0 + phase=1
-│   ├── sprint-evaluator.md      # 监听 + 判决 + checkpoint 处理
-│   ├── sprint-finalizer.md      # 收尾 + 管线沉淀
-│   └── hermes-reset.md          # 进程内 Reset
-└── protocols/                   # 协作协议
-    ├── checkpoint-qa.md
-    ├── yolo.md
-    ├── feature-isolation.md
-    ├── reset-mechanism.md
-    └── process-protocol.md
+│       ├── phase-workflow.md          phase 0-4 详细定义
+│       ├── acceptance-writing.md      如何写可验证的 acceptance
+│       └── cross-layer.md             跨层 feature 开发指南
+│
+├── protocols/                       协作协议
+│   ├── execution-paths.md            ⭐ cc / cc_mcp / mcp_direct 三路径
+│   ├── bootstrap-validation.md       ⭐ 所有 bash 校验 + JSON 示例
+│   ├── checkpoint-qa.md              checkpoint 问答协议
+│   ├── yolo.md                       管线级 YOLO 规则
+│   ├── feature-isolation.md          feature 并行协议
+│   ├── reset-mechanism.md            双 Reset 机制
+│   └── process-protocol.md           过程协议落盘清单
+│
+└── hooks/                           P0 级硬约束
+    ├── session-start.sh               强制注入上下文
+    ├── pre-edit-guard.sh              拦只读目录 / 跨 feature / eval_log 覆盖
+    ├── pre-bash-guard.sh              拦 force push / rm -rf / sudo
+    ├── stop-guard.sh                  未完成过程协议不得退出
+    ├── settings.json.template         CC hook 配置模板
+    └── README.md                      hook 使用说明
+```
+
+⭐ = v0.5 后的关键新增
+
+---
+
+## 核心概念速查
+
+| 概念 | 含义 | 位置 |
+|---|---|---|
+| **Task** | 一次完整任务 = 一个 sprint,由 task JSON 描述 | `tasks/pending/<id>.json` |
+| **Sprint** | 一次完整的 Planner→Generator→Evaluator→Finalizer 循环 | `sprints/sprint_YYYYMMDD_N/` |
+| **Pipeline** | 成功 sprint 抽象成的可复用管线模板 | `~/.hermes/pipelines/<id>/` |
+| **Feature** | sprint 内的可交付单元,有 4 phase | `feature_list.features[]` |
+| **Phase** | feature 阶段:1=plan, 2=implement, 3=verify, 4=deliver;sprint 级还有 phase=0=tooling | feature.phase |
+| **Checkpoint** | 人类决策点,三类:gate(阻塞)/ review(48h 默认过)/ notify(仅通知) | feature.checkpoints[] |
+| **Execution Path** | feature 执行路径:generator_cc / generator_cc_mcp / generator_mcp_direct | feature.execution_path |
+
+---
+
+## 工作流
+
+### 启动一个 task
+
+**推荐**:让 Hermes 执行 `sub-skills/task-builder.md`,提问式建 task。
+
+**手动**:
+
+1. 写 prompt → `pipeline/PROMPTS/<slug>.md`
+2. 建 task JSON → `pipeline/tasks/pending/task_YYYYMMDD_NNN.json`
+3. 等 Hermes 的 crontab 扫到
+
+### Hermes 被 crontab 触发后
+
+```
+task-runner skill
+ → 扫 tasks/pending/ 选优先级最高的
+ → 原子 mv 到 tasks/running/
+ → 读 prompt + mode,加 YOLO 提示(若 yolo)
+ → 进入 SKILL.md STEP 0 → STEP 5
+ → sprint 完成后 mv task JSON 到 sprints/<id>/TASK.json
+```
+
+### STEP 0-5 流程
+
+```
+STEP 0   身份定锚(Hermes 不产出业务)
+STEP 0.5 环境探测(必须真跑 bash,不得假设)
+STEP 1   初始化(问根目录 / 复制资源 / 建状态文件 / 自检)
+STEP 2   Planner(phase=0 tooling gate + phase=1 DAG gate)
+STEP 2.5 硬校验(进 STEP 3 前 15+ 条 bash test)
+STEP 3   启动 feature(按 execution_path 路径部署 hook + 启 CC)
+STEP 3.5 Phase 推进(每 phase 写 eval_log,phase=3 必含 acceptance_results)
+STEP 4   Evaluator 监听(读+判,不产出)
+STEP 5   sprint-finalizer(过程协议检查 → 沉淀管线或归档)
 ```
 
 ---
 
-## 运行时产出(Hermes 初始化的协作环境)
+## YOLO 模式
 
-Hermes 每次执行本 skill,会在 `~/Workbase/pipeline/sprint_<YYYYMMDD>_<N>/` 下生成:
+**两种 YOLO 正交**:
 
-```
-~/Workbase/pipeline/sprint_20260421_1/
-├── schemas/                     # 从本 skill 复制
-├── templates/                   # 从本 skill 复制
-├── spec/                        # 从本 skill 复制
-├── protocols/                   # 从本 skill 复制
-└── .harness/                    # 运行时
-    ├── runtime_state.json
-    ├── feature_list.json
-    ├── session_pool.json
-    ├── eval_log.jsonl
-    ├── hermes_context_state.json
-    ├── claude_code_context_state.json
-    ├── hermes_handoff.md
-    ├── .current_agent
-    ├── sprint_contracts/
-    │   └── sprint_20260421_1/
-    │       ├── contract.json
-    │       └── tooling.md
-    └── features/
-        ├── f001/
-        │   ├── session_id.txt
-        │   ├── context_snapshot.md
-        │   ├── generator_log.md
-        │   ├── handoff.md
-        │   └── AGENTS.md
-        └── f002/
-            └── ...
-```
+| 类型 | 触发 | 覆盖 | decision |
+|---|---|---|---|
+| Pipeline YOLO | 管线跑够 3 次 + 成功率 ≥ 90% | 管线中特定 feature 的 gate | `auto_approved_yolo` |
+| Task YOLO | 用户建 task 时勾选 `yolo` | 本 task 全程所有 gate(含 external_irreversible) | `auto_approved_yolo_task` |
+
+两者都有**安全底线**:
+
+- 无法决策(acceptance 失败 / 环境异常 / 连续 retry 上限)→ 立即失败退出,不编造通过
+- eval_log 每条 auto_approved 带 audit context,可事后审计
 
 ---
 
-## Sprint 生命周期
+## 硬约束 Z1-Z20
 
-```
-planning → tooling → planned → active ⇄ waiting_human
-                                   ↓
-                                suspended(可 resume)
-                                   ↓
-                              finalizing
-                                   ↓
-                              sunk / closed
-```
+SKILL.md 末尾有 20 条铁律,违反任一 = 本次 skill 调用失败。每条对应一个实际失败场景:
 
-详细见 `sub-skills/sprint-planner.md` 和 v0.5 架构文档(在 vault 中)。
-
----
-
-## 绝对禁止(skill 使用铁律)
-
-- ❌ 不修改本仓库里的 `schemas/` / `templates/` / `spec/` / `protocols/`(Hermes 运行时复制到 pipeline 子目录后也不改)
-- ❌ 不跳过 phase=0 tooling
-- ❌ 不跳过 gate checkpoint(除非 YOLO 明确允许,且非 external_irreversible)
-- ❌ 不并行多 sprint(单 sprint 独占)
-- ❌ 不越权(Generator 不做 Planner 的事,Planner 不做 Generator 的事)
+- Z1 Hermes 不产出业务
+- Z4 Feature 启动必走 STEP 3 完整流程
+- Z11 DAG gate 必走
+- Z12 封装 spawn 的诚实性(`delegate_task` 不等于真启 CC)
+- Z14 feature 目录必须在 `.harness/features/f<N>/`
+- Z17 phase=3 必含 acceptance_results 逐条证据
+- Z20 task 模式与相对路径规范
+- ...(完整见 SKILL.md)
 
 ---
 
-## 版本历史
+## 版本历史关键里程碑
 
-- **v0.4**(2026-04-21 上午):六层联动架构初稿。定义文件层 + Skill 层 + 约束层 + 双 Reset 层 + 监控层,给 Hermes Context Overload 提供了 hermes_handoff + pending_eval 机制
-- **v0.5**(2026-04-21 下午):新增 phase=0 tooling、Checkpoint 问答机制、YOLO、管线层、feature 级隔离、Hermes 常驻进程、单 sprint 独占、sprint-finalizer。七层联动 + 十大核心决策
+| commit | 关键改动 |
+|---|---|
+| `ab92af0` | v0.5 初始落地 |
+| `bd8bccd` | 加反越权铁律(修 sprint_1 越权) |
+| `781bc4d` | 加 STEP 0.5 环境探测(修 sprint_2 假装合规) |
+| `40bc096` | 三路径 + Phase 规则(修 sprint_4 8 个偏差) |
+| `2d6c81c` | SKILL 瘦身 49% + bootstrap-validation(上下文过载优化) |
+| `871d367` | task 队列 + task-runner + task-builder(YOLO task 模式) |
 
-完整架构决策记录位于用户 vault:
-`vault/space/crafted/writing/20260421_Hermes___Claude_Code_三层架构落地计划_v0_5.md`
+---
+
+## 使用前提
+
+1. Hermes 已部署(常驻 Agent 支持 skill 加载 + crontab)
+2. Claude Code CLI 已安装(STEP 0.5 会探测)
+3. pipeline 仓库已建(放 PROMPTS/ + tasks/ + sprints/)
+4. `jq` 可用(bash 校验命令依赖)
+
+---
+
+## 参考
+
+- pipeline 仓库: https://github.com/zzyong24/pipeline
+- 架构完整方案:vault 的「Hermes + Claude Code 三层架构完全落地方案」
+- 调试记录:vault 的「调试一个 AI Agent 协作架构:5 轮实跑、10 次 SKILL 迭代、3 种失败模式」
 
 ---
 
 ## 哲学
 
-**工程化文件夹 = 可复用的步骤 = 超级 skill。**
+> **工程化文件夹 = 可复用的步骤 = 超级 skill**
+>
+> 第一次跑累点,过程协议留全,管线沉淀后,第 4 次基本自动化。
+> 人工投入一次,换长期稳定自动化。
 
-第一次跑一个任务会累,但过程协议留好、管线沉淀下来之后,第 4 次基本自动化。
-人工投入一次,换长期稳定自动化,而不是追求一次性全自动。
+这套架构的核心不是"让 AI 更强",是**让人类和 AI 的协作契约显式化、工程化、可沉淀**。
