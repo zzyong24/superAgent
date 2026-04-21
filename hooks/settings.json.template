@@ -1,0 +1,49 @@
+{
+  "_comment_usage": "此文件是模板。Hermes 在启动 Claude Code feature session 前,将本文件复制到 .harness/features/<feature_id>/.claude/settings.json,并把环境变量写入。Claude Code 启动时会自动加载。",
+  "_comment_env": "HARNESS_ROOT / FEATURE_ID / SPRINT_ID 三个环境变量由 Hermes 通过 session 启动命令注入",
+
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HARNESS_ROOT}/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HARNESS_ROOT}/.claude/hooks/pre-edit-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HARNESS_ROOT}/.claude/hooks/pre-bash-guard.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HARNESS_ROOT}/.claude/hooks/stop-guard.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

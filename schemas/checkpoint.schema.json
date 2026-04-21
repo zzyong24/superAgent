@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "checkpoint.schema.json",
+  "title": "Checkpoint",
+  "description": "feature 的某个 phase 结束时,人类决策点。三种类型:gate(阻塞)/review(审查)/notify(通知)。见 protocols/checkpoint-qa.md。",
+  "type": "object",
+  "required": ["id", "phase", "type", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^cp-f[0-9]+(-[0-9]+)*-[0-9]+$",
+      "description": "格式:cp-<feature_id>-<序号>"
+    },
+    "phase": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "在 feature 的哪个 phase 结束后触发"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["gate", "review", "notify"],
+      "description": "gate=阻塞必须签字 | review=48h 默认通过 | notify=只通知不阻塞"
+    },
+    "blockers": {
+      "type": "array",
+      "description": "Hermes 从产物提炼的 2-4 条待决策问题。必须含最后一条 catch_all。",
+      "items": {
+        "type": "object",
+        "required": ["id", "question", "options"],
+        "properties": {
+          "id": {"type": "string"},
+          "question": {"type": "string"},
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "items": {"type": "string"}
+          },
+          "default_if_no_reply": {
+            "type": ["string", "null"],
+            "description": "gate 型必须为 null;review 型可以有默认"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "待审阅产物路径。eval_log 追溯用。v0.5 决策:链接不发,但路径要留档。",
+      "items": {"type": "string"}
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "passed", "failed", "skipped", "revoked"]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Hermes 发给用户的开头提示,说明本次要确认的事"
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "responded_at": {"type": ["string", "null"], "format": "date-time"},
+    "decision": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "approved",
+        "rejected",
+        "approved_with_changes",
+        "auto_approved_timeout",
+        "auto_approved_yolo",
+        "revoked"
+      ]
+    },
+    "feedback": {
+      "type": ["string", "null"],
+      "description": "approved_with_changes / rejected 时的用户反馈原文"
+    },
+    "revoked_from": {
+      "type": ["string", "null"],
+      "description": "被 revoke 前的原 decision,用于审计追溯"
+    },
+    "revoke_reason": {
+      "type": ["string", "null"]
+    },
+    "reminded_at": {
+      "type": "array",
+      "description": "gate 型 24h/72h 催办时间戳",
+      "items": {"type": "string", "format": "date-time"}
+    }
+  }
+}

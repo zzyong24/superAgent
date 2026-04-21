@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session_pool.schema.json",
+  "title": "Claude Code Session Pool",
+  "description": "管理 Claude Code feature 级 session。最多 max_concurrent 个同时运行。",
+  "type": "object",
+  "required": ["max_concurrent", "policy", "active"],
+  "properties": {
+    "max_concurrent": {
+      "type": "integer",
+      "default": 2,
+      "minimum": 1,
+      "description": "同时运行的 feature session 上限"
+    },
+    "policy": {
+      "type": "string",
+      "enum": ["start_when_dependency_ready"],
+      "default": "start_when_dependency_ready"
+    },
+    "active": {
+      "type": "object",
+      "description": "key 为 feature_id,value 为 session 状态",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["session_id", "status", "started_at"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "status": {
+            "type": "string",
+            "enum": ["running", "waiting_human", "completed", "resetting", "failed", "suspended"]
+          },
+          "started_at": {"type": "string", "format": "date-time"},
+          "current_phase": {"type": "integer"},
+          "last_activity": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eval_log.schema.json",
+  "title": "Eval Log Entry",
+  "description": "eval_log.jsonl 的单行格式。每次 Evaluator 做判断、每次 checkpoint 结果都追加一条。append-only,永不删除。",
+  "type": "object",
+  "required": ["timestamp", "sprint_id", "event_type"],
+  "properties": {
+    "timestamp": {"type": "string", "format": "date-time"},
+    "sprint_id": {"type": "string"},
+    "generator": {"type": "string", "default": "claude-code"},
+    "feature_id": {"type": "string"},
+    "phase": {"type": "integer", "minimum": 1, "maximum": 4},
+    "iteration": {"type": "integer", "minimum": 1},
+    "event_type": {
+      "type": "string",
+      "enum": ["phase_evaluation", "checkpoint", "retry", "fail", "yolo_enter", "yolo_abort", "reset"]
+    },
+    "result": {
+      "type": "string",
+      "enum": ["pass", "retry", "fail"]
+    },
+    "reason": {
+      "type": "string",
+      "description": "Evaluator 的判断理由。禁止'看起来不错'这种模糊描述"
+    },
+    "acceptance_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "criteria": {"type": "string"},
+          "status": {"type": "string", "enum": ["pass", "fail", "skipped"]}
+        }
+      }
+    },
+    "hermes_notes": {"type": "string"},
+    "commit": {"type": ["string", "null"]},
+    "checkpoint_id": {"type": "string"},
+    "checkpoint_type": {
+      "type": "string",
+      "enum": ["gate", "review", "notify"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "rejected",
+        "approved_with_changes",
+        "auto_approved_timeout",
+        "auto_approved_yolo",
+        "revoked"
+      ]
+    },
+    "user_reply_raw": {"type": "string"},
+    "blockers_resolved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "answer": {"type": "string"},
+          "feedback": {"type": "string"}
+        }
+      }
+    },
+    "yolo_context": {
+      "type": "object",
+      "properties": {
+        "pipeline_id": {"type": "string"},
+        "pipeline_run_count": {"type": "integer"},
+        "success_rate": {"type": "number"}
+      }
+    },
+    "revoked_from": {"type": "string"},
+    "revoke_reason": {"type": "string"}
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "runtime_state.schema.json",
+  "title": "Hermes Runtime State",
+  "description": "Hermes 进程的运行时状态。常驻进程内维护,每次变化必须落盘。Hermes Reset / 崩溃重启后,从此文件恢复。",
+  "type": "object",
+  "required": ["mode", "current_sprint", "session_started_at", "last_heartbeat"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["idle", "planning", "active", "waiting_human", "suspended"],
+      "description": "idle=无 sprint | planning=phase=0/1 进行中 | active=feature 执行中 | waiting_human=有 pending gate | suspended=用户手动挂起"
+    },
+    "current_sprint": {
+      "type": ["string", "null"],
+      "description": "当前 sprint id,格式 sprint_YYYYMMDD_N。idle 时为 null"
+    },
+    "current_project_path": {
+      "type": ["string", "null"],
+      "description": "当前 sprint 根目录绝对路径,如 ~/Workbase/pipeline/sprint_20260421_1/"
+    },
+    "pending_user_replies": {
+      "type": "array",
+      "description": "已推送但用户未回复的 checkpoint id 列表",
+      "items": {"type": "string"}
+    },
+    "session_started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Hermes 本次进程启动时间"
+    },
+    "last_heartbeat": {
+      "type": "string",
+      "format": "date-time",
+      "description": "最近一次 Hermes 活动时间戳,用于判断是否僵死"
+    },
+    "last_reset_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "最近一次 Hermes 进程内 Reset 时间"
+    }
+  }
+}

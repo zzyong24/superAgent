@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sprint_contract.schema.json",
+  "title": "Sprint Contract",
+  "description": "单个 sprint 的验收契约。Planner 写入,Generator 读取,Evaluator 据此判断。",
+  "type": "object",
+  "required": ["sprint_id", "created_at", "created_by", "generator_contract", "features", "evaluator_criteria"],
+  "properties": {
+    "sprint_id": {"type": "string"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "const": "hermes"},
+    "generator_contract": {
+      "type": "string",
+      "description": "对 Generator 的总体指令,如'完成 f001 的全部 acceptance criteria'"
+    },
+    "features": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "tooling_locked": {"type": "boolean"},
+    "tooling_doc": {"type": "string", "description": "tooling.md 相对路径"},
+    "evaluator_criteria": {
+      "type": "object",
+      "required": ["pass", "retry", "fail"],
+      "properties": {
+        "pass": {"type": "string"},
+        "retry": {"type": "string"},
+        "fail": {"type": "string"}
+      }
+    },
+    "human_checkpoint": {
+      "type": "boolean",
+      "default": true,
+      "description": "v0.5 遗留字段,实际 checkpoint 密度由 feature 级 checkpoints 决定"
+    },
+    "max_iterations": {"type": "integer", "default": 3},
+    "retry_policy": {
+      "type": "object",
+      "properties": {
+        "coding": {"type": "integer", "default": 3},
+        "research": {"type": "integer", "default": 1},
+        "deployment": {"type": "integer", "default": 2},
+        "content": {"type": "integer", "default": 2}
+      }
+    },
+    "iteration_history": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "status": {
+      "type": "string",
+      "enum": ["planning", "tooling", "planned", "active", "waiting_human", "suspended", "finalizing", "sunk", "closed"],
+      "default": "planning"
+    }
+  }
+}
