@@ -20,9 +20,86 @@
 | STEP 3 | `protocols/execution-paths.md` + `spec/AGENTS.md` | `protocols/bootstrap-validation.md` §5-§8 |
 | STEP 4 | `sub-skills/sprint-evaluator.md` + `protocols/yolo.md` | `protocols/feature-isolation.md` |
 | STEP 5 | `sub-skills/sprint-finalizer.md` + `protocols/process-protocol.md` | — |
-| Reset | `sub-skills/hermes-reset.md` + `protocols/reset-mechanism.md` | — |
+| Reset 时 | `sub-skills/hermes-reset.md` + `protocols/reset-mechanism.md` | — |
+| **Task 队列调度(被 crontab 触发)** | `sub-skills/task-runner.md` | — |
+| **用户建新 task** | `sub-skills/task-builder.md` | — |
 
 进入下一个 STEP 时,**卸载**上一阶段的 sub-skill 和 protocol(只保留本 SKILL.md)。
+
+---
+
+## § Task 模式(YOLO / Interactive)
+
+本 skill 支持两种任务触发方式:
+
+### 方式一:用户直接给 prompt
+
+用户手动贴 prompt 给你,你按 STEP 0-5 正常流程执行。mode 默认 `interactive`。
+
+### 方式二:从 task 队列触发(crontab)
+
+Hermes 通过 crontab 定期调 `sub-skills/task-runner.md`,runner 从 `tasks/pending/` 取 task 文件,读出 prompt + mode,然后进入本 SKILL。
+
+task 文件 schema:
+
+```json
+{
+  "id": "task_YYYYMMDD_NNN",
+  "title": "...",
+  "prompt_file": "PROMPTS/xxx.md",         // 相对路径
+  "mode": "interactive" | "yolo",
+  "auto_approve_all": false | true,
+  "pipeline_hint": null | "<pipeline_id>",
+  "priority": 1-5,
+  "status": "pending" | "running" | "failed",
+  "sprint_id": null | "sprint_YYYYMMDD_N",
+  "yolo_overrides": {                      // 可选,yolo 下的细粒度覆盖
+    "keep_gates_for": ["external_irreversible"]
+  }
+}
+```
+
+### YOLO 模式行为规则(mode = "yolo" 且 auto_approve_all = true 时)
+
+| 场景 | interactive | YOLO |
+|---|---|---|
+| STEP 0.5 CC 探测失败 | 推 gate 问用户 | 标 task=failed,退出,不问 |
+| STEP 1.1 根目录 | 问用户 | 默认 `sprints/`(相对路径),不问 |
+| tooling gate | 推 gate | 自动 approved,eval_log decision=`auto_approved_yolo_task` |
+| DAG gate | 推 gate | 自动 approved |
+| phase 级 gate(plan/verify/deliver) | 推 gate | acceptance 自检过就过,不过立即 fail |
+| **external_irreversible 操作** | 推 gate(强制) | **默认自动过**(用户签 task 即授权);除非 `yolo_overrides.keep_gates_for` 明确含 "external_irreversible" |
+| 遇到任何"无法决策" | 推 gate 问用户 | **task=failed,退出**,不编造通过 |
+| sprint-finalizer | 推 gate 问是否沉淀 | 按管线规则自动判(合规度够就沉淀) |
+
+### YOLO 模式下 eval_log 的区别
+
+所有自动通过的 checkpoint,在 eval_log 里 decision 字段写 **`auto_approved_yolo_task`**(不是 `auto_approved_yolo`,后者是 Pipeline YOLO 的)。
+
+```json
+{
+  "event_type": "checkpoint",
+  "checkpoint_id": "cp-sprint-tooling",
+  "decision": "auto_approved_yolo_task",
+  "task_id": "task_20260421_003",          // yolo task 必填此字段,方便审计
+  "yolo_context": {
+    "mode": "task_level",
+    "auto_approve_all": true,
+    "keep_gates_for": []
+  }
+}
+```
+
+### YOLO Abort 的差异
+
+- **Pipeline YOLO** 遇到 fail 会 revoke 所有 auto_approved,走 abort 流程,推聚合 gate
+- **Task YOLO** 遇到 fail **不做 revoke**(因为没有用户可推),直接把 task 标 failed 退出
+
+### 如何判断当前在哪种 Task 模式
+
+- task 文件不存在(用户直接贴 prompt)→ interactive
+- task.mode == "interactive" → interactive
+- task.mode == "yolo" + task.auto_approve_all == true → YOLO
 
 ---
 
@@ -228,8 +305,10 @@ jq 更新命令 → **`protocols/bootstrap-validation.md` §7**
 | 判决 + checkpoint 处理 | `sub-skills/sprint-evaluator.md` |
 | sprint 收尾 + 管线沉淀 | `sub-skills/sprint-finalizer.md` |
 | 自身 Reset | `sub-skills/hermes-reset.md` |
+| **Task 队列调度(crontab 触发)** | `sub-skills/task-runner.md` |
+| **用户建新 task(提问式)** | `sub-skills/task-builder.md` |
 | checkpoint 问答协议 | `protocols/checkpoint-qa.md` |
-| YOLO 规则 | `protocols/yolo.md` |
+| YOLO 规则(管线级 + task 级) | `protocols/yolo.md` |
 | feature 并行规则 | `protocols/feature-isolation.md` |
 | 双 Reset 机制 | `protocols/reset-mechanism.md` |
 | 过程协议落盘清单 | `protocols/process-protocol.md` |
@@ -298,7 +377,7 @@ Hermes Reset 顺序必须:`hermes_handoff.md → hermes_context_state.json → r
 - `feature.phase`: `1 | 2 | 3 | 4`(phase=0 只在 sprint 级)
 - `checkpoint.type`: `gate | review | notify`
 - `checkpoint.status`: `pending | passed | failed | skipped | revoked`
-- eval_log `decision`: `approved | rejected | approved_with_changes | auto_approved_timeout | auto_approved_yolo | revoked`
+- eval_log `decision`: `approved | rejected | approved_with_changes | auto_approved_timeout | auto_approved_yolo | auto_approved_yolo_task | revoked`
 
 写任何不在列表的值(如 `"executing"` / `"done"` / `"pass"`)都违规。
 
@@ -371,6 +450,24 @@ feature 目录只能是 `$HARNESS_ROOT/.harness/features/f<N>/`,不是:
 - ❌ `$HARNESS_ROOT/.harness/features/f001/sources.md`(业务产出物不在运行时目录)
 
 `.harness/features/f<N>/` 只放**过程协议文件**(context_snapshot / AGENTS / generator_log / handoff / session_id.txt / .claude/)。
+
+### Z20. Task 模式与路径规范
+
+task 队列下启动时(通过 task-runner 进入):
+
+- ✅ 所有路径**相对 pipeline 根目录**,不得硬编码绝对路径(跨机器可移植)
+- ✅ `task.id` 必须符合 `task_YYYYMMDD_NNN` 格式
+- ✅ YOLO task 的每个 auto_approved 条目必须在 eval_log 带 `task_id` + `yolo_context.mode="task_level"`
+- ❌ 不得在 YOLO task 下偷偷推 gate 给用户("装作请求确认")—— 违反 auto_approve_all 约定
+- ❌ 不得用 Pipeline YOLO 的 `auto_approved_yolo` 冒充 Task YOLO(decision 字段要写 `auto_approved_yolo_task`)
+- ❌ YOLO task 遇到无法决策时,必须标 task.status="failed" 退出;**不得**编造 acceptance_results 以"过关"
+- ❌ task-runner 不得在 `tasks/running/` 非空时启新 task(并发保护,Z8 的延伸)
+
+YOLO task 下 external_irreversible 处理:
+
+- 默认:自动过(用户签 task 时就默认授权)
+- 除非 `task.yolo_overrides.keep_gates_for` 明确列出 `"external_irreversible"`,否则不额外保留
+- 即:YOLO 就是 YOLO,用户事先已经选择了信任
 
 ---
 
